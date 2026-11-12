@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.shape.CircleShape
@@ -42,7 +43,9 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -65,6 +68,13 @@ private const val SPRING_DAMPING = 0.7f
 private const val SPRING_STIFFNESS = 400f
 private fun <T> islandSpring(): SpringSpec<T> = spring(dampingRatio = SPRING_DAMPING, stiffness = SPRING_STIFFNESS)
 
+/**
+ * Expand/collapse springs tuned from the reference recording: the panel reaches full size in ~6-7 frames at 30fps
+ * (~200ms) with a very small overshoot on expand, and collapses a touch quicker and tighter than it opens.
+ */
+private fun <T> expandSpring(): SpringSpec<T> = spring(dampingRatio = 0.78f, stiffness = 650f)
+private fun <T> collapseSpring(): SpringSpec<T> = spring(dampingRatio = 0.88f, stiffness = 720f)
+
 private fun haptic(view: View, s: IslandSettings, type: Int) {
     if (s.haptics) view.performHapticFeedback(type)
 }
@@ -83,6 +93,10 @@ fun IslandPill(
     modifier: Modifier = Modifier,
     /** Called when the expand/collapse animation has fully finished (true = expanded). Lets the overlay resize its window. */
     onExpandSettled: (Boolean) -> Unit = {},
+    /** True in the real overlay: fill the window and centre the pill inside it (no WRAP_CONTENT re-centring lag). */
+    centerInWindow: Boolean = false,
+    /** Pill bounds in window pixels (left, top, right, bottom), reported on every layout. */
+    onPillBounds: (Int, Int, Int, Int) -> Unit = { _, _, _, _ -> },
 ) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -102,7 +116,7 @@ fun IslandPill(
         if (!state.visible) actions.onExitFinished()
     }
     LaunchedEffect(state.expanded) {
-        expand.animateTo(if (state.expanded) 1f else 0f, islandSpring())
+        expand.animateTo(if (state.expanded) 1f else 0f, if (state.expanded) expandSpring() else collapseSpring())
         onExpandSettled(state.expanded)
     }
 
@@ -129,7 +143,11 @@ fun IslandPill(
     // ABSOLUTE ROOT of the island. All gestures live on this node, so a swipe that starts on the compact pill
     // behaves exactly like one that starts on the expanded panel.
     Box(
-        modifier
+        modifier.then(if (centerInWindow) Modifier.fillMaxSize() else Modifier),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+    Box(
+        Modifier
             // Appear/disappear scale, explicitly about the dead centre of the island (the camera punch-hole).
             .graphicsLayer {
                 val v = vis.value.coerceIn(0f, 1f)
@@ -216,6 +234,10 @@ fun IslandPill(
                 val placeable = measurable.measure(Constraints.fixed(w, h))
                 layout(w, h) { placeable.place(0, 0) }
             }
+            .onGloballyPositioned { c ->
+                val r = c.boundsInWindow()
+                onPillBounds(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())
+            }
             .graphicsLayer {
                 val p = expand.value.coerceIn(0f, 1f)
                 val r = lerp(compactH.dp.toPx() / 2f, EXPANDED_CORNER_DP.dp.toPx(), p)
@@ -229,7 +251,7 @@ fun IslandPill(
         if (showCompact) {
             Box(
                 Modifier.requiredSize(compactW.dp, compactH.dp).graphicsLayer {
-                    alpha = (1f - expand.value / 0.35f).coerceIn(0f, 1f)
+                    alpha = (1f - expand.value / 0.16f).coerceIn(0f, 1f)
                     translationX = dragX * 0.35f
                     translationY = dragY * 0.35f
                     transformOrigin = TransformOrigin(0.5f, 0.5f)
@@ -241,7 +263,11 @@ fun IslandPill(
         if (showExpanded) {
             Box(
                 Modifier.requiredSize(expandedWidth, expandedHeight.value).graphicsLayer {
-                    alpha = ((expand.value - 0.45f) / 0.4f).coerceIn(0f, 1f)
+                    val e = expand.value.coerceIn(0f, 1f)
+                    alpha = ((e - 0.10f) / 0.38f).coerceIn(0f, 1f)
+                    // Content settles in from slightly smaller, like the reference.
+                    val cs = 0.92f + 0.08f * e
+                    scaleX = cs; scaleY = cs
                     translationX = dragX * 0.35f
                     translationY = dragY * 0.35f
                     transformOrigin = TransformOrigin(0.5f, 0.5f)
@@ -251,6 +277,7 @@ fun IslandPill(
                 if (state.activities.size > 1) PageDots(state)
             }
         }
+    }
     }
 }
 

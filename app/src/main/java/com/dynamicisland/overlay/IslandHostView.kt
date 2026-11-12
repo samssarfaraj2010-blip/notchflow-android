@@ -38,8 +38,18 @@ class IslandHostView(
     init {
         setViewTreeLifecycleOwner(owner)
         setViewTreeSavedStateRegistryOwner(owner)
-        addView(compose, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        // MATCH_PARENT on purpose: the pill is centred INSIDE Compose (same layout pass as its size), so it can never
+        // lag a frame behind a WRAP_CONTENT ComposeView that Android re-centres one traversal later.
+        addView(compose, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.TOP))
     }
+
+    // Pill bounds in window coordinates, reported by Compose every layout. All zero until the first report.
+    private var pillL = 0
+    private var pillT = 0
+    private var pillR = 0
+    private var pillB = 0
+
+    fun setPillBounds(l: Int, t: Int, r: Int, b: Int) { pillL = l; pillT = t; pillR = r; pillB = b }
 
     fun setContent(content: @Composable () -> Unit) = compose.setContent(content)
 
@@ -51,7 +61,8 @@ class IslandHostView(
         // While expanded the window spans the full screen width. A touch on its transparent margins is a touch
         // "outside the island" as far as the user is concerned.
         if (ev.actionMasked == MotionEvent.ACTION_DOWN &&
-            (ev.x < compose.left || ev.x > compose.right || ev.y < compose.top || ev.y > compose.bottom)
+            pillR > pillL &&
+            (ev.x < pillL || ev.x > pillR || ev.y < pillT || ev.y > pillB)
         ) {
             onOutsideTouch()
             return true

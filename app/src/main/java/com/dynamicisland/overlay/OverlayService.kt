@@ -194,8 +194,10 @@ class OverlayService : Service() {
                 state = ui, geometry = geo, settings = settings, actions = controller,
                 onExpandSettled = { expanded ->
                     OverlayDiag.put("Compose", "running")
-                    if (!expanded) setWindowExpanded(false)
+                    if (!expanded) shrinkWindowAfterCollapse()
                 },
+                centerInWindow = true,
+                onPillBounds = { l, t, r, b -> host?.setPillBounds(l, t, r, b) },
             )
         }
         windowExpanded = controller.state.value.expanded
@@ -270,6 +272,23 @@ class OverlayService : Service() {
             p.y = newY
             p.pinToTopCenter()
             overlayWm?.updateViewLayout(h, p)
+        }
+    }
+
+    /**
+     * Collapse is finished and the pill is back to its compact size. Shrinking the window changes its surface size,
+     * and for a frame or two the compositor can show the previous (full-width) buffer inside the new, narrower
+     * frame - that is the pill "jumping to the left of the status bar". We hide the (already-resting) pill for the
+     * resize and reveal it once the new-size frame has been drawn.
+     */
+    private fun shrinkWindowAfterCollapse() {
+        val h = host ?: return
+        if (!windowExpanded) return
+        h.alpha = 0f
+        h.postOnAnimation {
+            if (host !== h) return@postOnAnimation
+            if (!controller.state.value.expanded) setWindowExpanded(false)
+            h.postOnAnimation { h.postOnAnimation { h.alpha = 1f } }
         }
     }
 
