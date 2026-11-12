@@ -53,7 +53,7 @@ class CallTracker(private val ctx: Context) {
         if (!ended) {
             runCatching {
                 ctx.startActivity(
-                    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_PHONE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_DEFAULT).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
             }
         }
