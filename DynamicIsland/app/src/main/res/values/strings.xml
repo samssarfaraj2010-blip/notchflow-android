@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">NotchFlow</string>
+    <string name="a11y_description">Lets NotchFlow show its island above the status bar so it can be tapped. It does not read your screen or what you type.</string>
+</resources>
