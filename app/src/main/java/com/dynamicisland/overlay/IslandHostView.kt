@@ -6,6 +6,7 @@ import android.view.MotionEvent
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -32,10 +33,14 @@ class IslandHostView(
     context: Context,
     owner: SavedStateRegistryOwner,
     private val onOutsideTouch: () -> Unit,
+    private val onTouchStart: () -> Unit = {},
 ) : FrameLayout(context) {
     private val compose = ComposeView(context)
 
     init {
+        // The host owns exactly one Compose composition for its entire attached lifetime.
+        // Disposing on detach prevents a stale overlay composition surviving service re-attachment.
+        compose.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         setViewTreeLifecycleOwner(owner)
         setViewTreeSavedStateRegistryOwner(owner)
         // MATCH_PARENT on purpose: the pill is centred INSIDE Compose (same layout pass as its size), so it can never
@@ -54,6 +59,7 @@ class IslandHostView(
     fun setContent(content: @Composable () -> Unit) = compose.setContent(content)
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) onTouchStart()
         if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE) {
             onOutsideTouch()
             return true

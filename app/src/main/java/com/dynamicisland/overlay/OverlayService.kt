@@ -16,6 +16,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -61,10 +62,13 @@ class OverlayService : Service() {
     private var host: IslandHostView? = null
     private var params: WindowManager.LayoutParams? = null
     private var screenReceiver: BroadcastReceiver? = null
+    private var systemStateReceiver: BroadcastReceiver? = null
     private var initialized = false
     private var windowExpanded = false
     private var overlayWm: WindowManager? = null
     @Volatile private var phoneRinging = false
+    private var shrinkToken = 0
+    private var boostJob: kotlinx.coroutines.Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -97,6 +101,7 @@ class OverlayService : Service() {
         updateGeometry(resources.configuration)
         controller.setScreenOn(getSystemService(PowerManager::class.java).isInteractive)
         registerScreenReceiver()
+        registerSystemStateReceiver()
         rt.battery.start()
         rt.media.start()
         rt.calls.start()
@@ -111,6 +116,10 @@ class OverlayService : Service() {
             }
         }
         scope.launch { controller.state.map { it.hasContent }.distinctUntilChanged().collect { if (it) attach() } }
+        // Every transition (expand, collapse, appear, switch activity) runs at the panel's top refresh rate.
+        scope.launch {
+            controller.state.map { Triple(it.expanded, it.visible, it.currentIndex) }.distinctUntilChanged().collect { boostRefresh() }
+        }
         // Grow the window before the expand animation; it shrinks again once collapsing has finished.
         scope.launch { controller.state.map { it.expanded }.distinctUntilChanged().collect { if (it) setWindowExpanded(true) } }
         scope.launch {
@@ -171,6 +180,8 @@ class OverlayService : Service() {
             detach()
             screenReceiver?.let { unregisterReceiver(it) }
             screenReceiver = null
+            systemStateReceiver?.let { unregisterReceiver(it) }
+            systemStateReceiver = null
             IslandRuntime.battery.stop()
             IslandRuntime.media.stop()
             IslandRuntime.calls.stop()
@@ -183,9 +194,9 @@ class OverlayService : Service() {
 
     private fun attach() {
         if (phoneRinging || host != null) return
-        val view = IslandHostView(this, owner) {
+        val view = IslandHostView(this, owner, onOutsideTouch = {
             if (IslandRuntime.settings.value.tapOutsideCollapse) controller.collapse()
-        }
+        }, onTouchStart = { boostRefresh() })
         view.setContent {
             val ui by controller.state.collectAsState()
             val geo by geometry.collectAsState()
@@ -210,6 +221,7 @@ class OverlayService : Service() {
             overlayWm = manager
             host = view
             params = p
+            boostRefresh()
             OverlayDiag.put("Window", "added via ${if (a11y != null) "accessibility" else "overlay"}, y=${p.y}px, size=${p.width}x${p.height}px")
         } catch (e: SecurityException) {
             Log.e(TAG, "Overlay window rejected", e)
@@ -276,19 +288,55 @@ class OverlayService : Service() {
     }
 
     /**
-     * Collapse is finished and the pill is back to its compact size. Shrinking the window changes its surface size,
-     * and for a frame or two the compositor can show the previous (full-width) buffer inside the new, narrower
-     * frame - that is the pill "jumping to the left of the status bar". We hide the (already-resting) pill for the
-     * resize and reveal it once the new-size frame has been drawn.
+     * Collapse is finished and the pill is back at compact size. Shrinking the window changes its surface size, and
+     * until the new-size buffer reaches the screen the compositor can show the old full-width one in the narrower
+     * frame - the pill "jumps left of the status bar". So: (1) draw a fully transparent frame, (2) resize, (3) wait
+     * until the host has REALLY been laid out at the new width, (4) let one more frame through, (5) reveal the pill.
+     * A 350 ms safety net guarantees the pill always comes back.
      */
     private fun shrinkWindowAfterCollapse() {
         val h = host ?: return
         if (!windowExpanded) return
+        val token = ++shrinkToken
+        val targetW = windowSize(geometry.value, false).first
+        val reveal = Runnable { if (host === h && token == shrinkToken) h.alpha = 1f }
         h.alpha = 0f
         h.postOnAnimation {
-            if (host !== h) return@postOnAnimation
-            if (!controller.state.value.expanded) setWindowExpanded(false)
-            h.postOnAnimation { h.postOnAnimation { h.alpha = 1f } }
+            if (host !== h || token != shrinkToken || controller.state.value.expanded) {
+                h.alpha = 1f
+                return@postOnAnimation
+            }
+            if (h.width == targetW) {
+                setWindowExpanded(false)
+                h.alpha = 1f
+                return@postOnAnimation
+            }
+            val listener = object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View, left: Int, top: Int, right: Int, bottom: Int,
+                    oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+                ) {
+                    if (right - left != targetW) return
+                    v.removeOnLayoutChangeListener(this)
+                    v.postOnAnimation { v.postOnAnimation(reveal) }
+                }
+            }
+            h.addOnLayoutChangeListener(listener)
+            h.postDelayed({ h.removeOnLayoutChangeListener(listener); reveal.run() }, 350)
+            setWindowExpanded(false)
+        }
+    }
+
+    /** Keep the highest supported same-resolution display mode requested for the full overlay lifetime.
+     * Android/OEM firmware may still choose a lower physical rate; this is a request, not a guarantee.
+     */
+    private fun boostRefresh() {
+        val h = host ?: return
+        val p = params ?: return
+        if (HighRefresh.apply(this, p, true)) {
+            try { overlayWm?.updateViewLayout(h, p) } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Overlay detached while applying refresh policy", e)
+            }
         }
     }
 
@@ -311,6 +359,7 @@ class OverlayService : Service() {
             y = g.yPx
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             title = "DynamicIsland"
+            HighRefresh.apply(this@OverlayService, this, true)
         }
     }
 
@@ -331,6 +380,57 @@ class OverlayService : Service() {
             p.pinToTopCenter()
             overlayWm?.updateViewLayout(h, p)
         }
+    }
+
+    // ---- transient system-state events -----------------------------------------------------
+
+    /**
+     * Converts supported system broadcasts into the same single-slot activity pipeline used by media and
+     * notifications. This deliberately stores only a short display label, never device identifiers.
+     */
+    private fun registerSystemStateReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val event = when (intent.action) {
+                    android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED ->
+                        "Bluetooth connected"
+                    android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED ->
+                        "Bluetooth disconnected"
+                    android.media.AudioManager.RINGER_MODE_CHANGED_ACTION -> {
+                        val audio = getSystemService(android.media.AudioManager::class.java)
+                        when (audio?.ringerMode) {
+                            android.media.AudioManager.RINGER_MODE_SILENT -> "Silent mode"
+                            android.media.AudioManager.RINGER_MODE_VIBRATE -> "Vibrate mode"
+                            android.media.AudioManager.RINGER_MODE_NORMAL -> "Ring mode"
+                            else -> null
+                        }
+                    }
+                    android.app.NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> {
+                        val nm = getSystemService(android.app.NotificationManager::class.java)
+                        when (nm?.currentInterruptionFilter) {
+                            android.app.NotificationManager.INTERRUPTION_FILTER_NONE,
+                            android.app.NotificationManager.INTERRUPTION_FILTER_ALARMS,
+                            android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY -> "Do Not Disturb changed"
+                            android.app.NotificationManager.INTERRUPTION_FILTER_ALL -> "Do Not Disturb off"
+                            else -> null
+                        }
+                    }
+                    else -> null
+                } ?: return
+                val key = "system:${intent.action}:${android.os.SystemClock.elapsedRealtime()}"
+                IslandRuntime.latestNotification.value = com.dynamicisland.core.NotificationData(
+                    key = key, title = event, text = "", appName = "NotchFlow"
+                )
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(android.media.AudioManager.RINGER_MODE_CHANGED_ACTION)
+            addAction(android.app.NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+        }
+        ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        systemStateReceiver = receiver
     }
 
     // ---- screen state ----------------------------------------------------------------------

@@ -72,8 +72,8 @@ private fun <T> islandSpring(): SpringSpec<T> = spring(dampingRatio = SPRING_DAM
  * Expand/collapse springs tuned from the reference recording: the panel reaches full size in ~6-7 frames at 30fps
  * (~200ms) with a very small overshoot on expand, and collapses a touch quicker and tighter than it opens.
  */
-private fun <T> expandSpring(): SpringSpec<T> = spring(dampingRatio = 0.78f, stiffness = 650f)
-private fun <T> collapseSpring(): SpringSpec<T> = spring(dampingRatio = 0.88f, stiffness = 720f)
+private fun <T> expandSpring(): SpringSpec<T> = spring(dampingRatio = 0.82f, stiffness = 700f)
+private fun <T> collapseSpring(): SpringSpec<T> = spring(dampingRatio = 0.90f, stiffness = 820f)
 
 private fun haptic(view: View, s: IslandSettings, type: Int) {
     if (s.haptics) view.performHapticFeedback(type)
@@ -224,7 +224,7 @@ fun IslandPill(
             // Size: compact -> expanded, driven by the spring in the layout phase (no recomposition per frame).
             .layout { measurable, constraints ->
                 if (vis.value <= 0.001f) return@layout layout(1, 1) {}
-                val p = expand.value.coerceIn(0f, 1.1f)
+                val p = expand.value.coerceIn(0f, 1f)
                 val maxW = constraints.maxWidth
                 var w = lerp(compactW.dp.toPx(), expandedWidth.toPx(), p).roundToInt().coerceIn(1, maxW)
                 // Keep (window width - pill width) even: the pill then sits on an exact pixel centre while it

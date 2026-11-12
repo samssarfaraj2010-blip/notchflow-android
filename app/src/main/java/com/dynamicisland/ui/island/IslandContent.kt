@@ -233,41 +233,63 @@ fun ExpandedContent(
 }
 
 /**
- * Slim music panel. Top band (level with the camera): artwork left, visualizer right, centre kept clear.
- * Below it: title/artist on the left, transport controls on the right, and a thin progress line at the bottom.
+ * HyperOS-inspired media surface. Artwork and metadata form the left visual column, transport
+ * controls stay in a fixed-width right rail, and the progress track is anchored to the bottom.
+ * The layout deliberately avoids a second nested card: the animated island surface is the card.
  */
 @Composable
 private fun MusicExpanded(m: MusicData, active: Boolean, settings: IslandSettings, actions: IslandActions, interactive: Boolean, band: Dp) {
-    Column(Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, bottom = 9.dp)) {
-        Row(Modifier.fillMaxWidth().height(band), verticalAlignment = Alignment.CenterVertically) {
-            Artwork(m, 24.dp, 7.dp)
-            Spacer(Modifier.weight(1f))
-            Visualizer(m.playing, active && settings.visualizer && settings.animationStyle != 3, Palette.Pink, Modifier.size(20.dp, 16.dp))
-        }
-        Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                T(m.title, 15, Color.White, FontWeight.SemiBold, maxLines = 1)
-                T(m.artist.ifBlank { m.appName }, 12, Color(0x99FFFFFF), maxLines = 1)
+    val visualizerEnabled = active && settings.visualizer && settings.animationStyle != 3
+    Column(
+        Modifier.fillMaxSize().padding(start = 18.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Artwork(m, 46.dp, 12.dp)
+            Column(
+                Modifier.weight(1f).padding(start = 11.dp, end = 8.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                T(m.title.ifBlank { "Unknown track" }, 14, Color.White, FontWeight.SemiBold, maxLines = 1)
+                T(m.artist.ifBlank { m.appName }, 11, Color(0xAFFFFFFF), FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(top = 3.dp))
+                if (visualizerEnabled && m.playing) {
+                    Visualizer(true, true, Palette.Pink, Modifier.padding(top = 5.dp).size(30.dp, 8.dp))
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                ControlButton(Icons.Rounded.SkipPrevious, 24.dp, m.canPrev && interactive) { actions.musicPrevious() }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                ControlButton(Icons.Rounded.SkipPrevious, 21.dp, m.canPrev && interactive) { actions.musicPrevious() }
                 Box(
-                    Modifier.size(38.dp).pressable(m.canToggle && interactive) { actions.musicPlayPause() }.clip(CircleShape).background(Color.White),
+                    Modifier.size(34.dp)
+                        .pressable(m.canToggle && interactive) { actions.musicPlayPause() }
+                        .clip(CircleShape)
+                        .background(Color.White),
                     contentAlignment = Alignment.Center,
-                ) { Glyph(if (m.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, Color.Black, 22.dp, description = if (m.playing) "Pause" else "Play") }
-                ControlButton(Icons.Rounded.SkipNext, 24.dp, m.canNext && interactive) { actions.musicNext() }
+                ) {
+                    Glyph(
+                        if (m.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        Color.Black, 20.dp,
+                        description = if (m.playing) "Pause" else "Play",
+                    )
+                }
+                ControlButton(Icons.Rounded.SkipNext, 21.dp, m.canNext && interactive) { actions.musicNext() }
             }
         }
-        Spacer(Modifier.weight(1f))
         MusicProgress(m, active)
     }
 }
 
 @Composable
 private fun ControlButton(icon: ImageVector, size: Dp, enabled: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(40.dp).alpha(if (enabled) 1f else 0.3f).pressable(enabled, onClick), contentAlignment = Alignment.Center) {
-        Glyph(icon, Color.White, size)
-    }
+    Box(
+        Modifier.size(30.dp).alpha(if (enabled) 1f else 0.34f).pressable(enabled, onClick),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(icon, Color.White, size) }
 }
 
 /** Thin progress line with the elapsed / remaining time on either side. */
@@ -333,7 +355,7 @@ private fun CallExpanded(d: CallData, active: Boolean, actions: IslandActions, i
         Row(
             Modifier.weight(1f).pressable(interactive) {
                 runCatching {
-                    context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_DEFAULT).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_PHONE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
             },
             verticalAlignment = Alignment.CenterVertically,
