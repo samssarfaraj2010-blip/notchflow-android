@@ -333,7 +333,7 @@ private fun CallExpanded(d: CallData, active: Boolean, actions: IslandActions, i
         Row(
             Modifier.weight(1f).pressable(interactive) {
                 runCatching {
-                    context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_PHONE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_DEFAULT).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
             },
             verticalAlignment = Alignment.CenterVertically,
